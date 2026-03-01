@@ -224,16 +224,20 @@ async def openai_ozet(metin: str, baslik: str = "") -> dict:
     headers = {"Authorization": f"Bearer {OPENAI_KEY}", "Content-Type": "application/json"}
 
     prompt = (
-        "Sana bir kripto para haberi veriyorum. Şunları yap:\n\n"
-        "1. Başlığı Türkçeye çevir (kısa ve vurucu)\n"
-        "2. Haberi Türkçe olarak 3-5 cümleyle özetle (sade, heyecan verici dil)\n"
+        "Sana Türkçe bir kripto para haberi veriyorum. Şunları yap:\n\n"
+        "1. Başlığı düzenle: Zaten Türkçeyse sadece kısa ve vurucu hale getir\n"
+        "2. Haberi Türkçe olarak 3-5 cümleyle özetle. "
+        "Sade, akıcı, heyecan verici dil kullan. "
+        "Teknik detayları sadeleştir. Okuyucuya ne anlama geldiğini açıkla.\n"
         "3. Bu haber 'SON DAKİKA' niteliğinde mi? "
-        "(SEC kararı, exchange hack, büyük ülke yasağı/kabulü, büyük fiyat hareketi, whale işlemi) true/false\n"
-        "4. İlgili kripto etiketleri (max 3, örn: #BTC #ETH)\n\n"
-        "Yanıtı SADECE JSON formatında ver:\n"
-        "{\"baslik\": \"...\", \"ozet\": \"...\", \"son_dk\": true, \"etiketler\": [\"#BTC\"]}\n\n"
-        f"Başlık: {baslik}\n"
-        f"İçerik: {metin[:1500]}"
+        "Evet kriterleri: büyük borsa hack/iflas, ülke kararı (yasak/kabul), "
+        "SEC/regülasyon kararı, BTC/ETH %5+ ani hareket, büyük whale işlemi. "
+        "Rutin haber, fiyat tahmini, analiz = false.\n"
+        "4. İlgili kripto etiketleri (max 3, örn: #BTC #ETH #SOL)\n\n"
+        "Yanıtı SADECE JSON formatında ver, başka hiç bir şey yazma:\n"
+        "{\"baslik\": \"kısa başlık\", \"ozet\": \"özet metin\", \"son_dk\": false, \"etiketler\": [\"#BTC\"]}\n\n"
+        f"--- HABER BAŞLIĞI ---\n{baslik}\n\n"
+        f"--- HABER İÇERİĞİ ---\n{metin[:1500]}"
     )
 
     payload = {
@@ -264,15 +268,9 @@ async def openai_ozet(metin: str, baslik: str = "") -> dict:
 # ══════════════════════════════════════════════════════════════
 # HABER KAYNAKLARI — İngilizce + Türkçe
 # ══════════════════════════════════════════════════════════════
+# Sadece Türkçe kaynaklar — İngilizce kaynak yok
+# AI özeti zaten Türkçe yapıyor, Türkçe sitelerden haber çekince çeviri kalitesi artar
 HABER_KAYNAKLARI = [
-    # İngilizce
-    {
-        "url"  : "https://min-api.cryptocompare.com/data/v2/news/?lang=EN&sortOrder=latest",
-        "tip"  : "cryptocompare",
-        "dil"  : "en",
-        "isim" : "CryptoCompare",
-    },
-    # Türkçe RSS
     {
         "url"  : "https://api.rss2json.com/v1/api.json?rss_url=https://www.btchaber.com/feed/",
         "tip"  : "rss2json",
@@ -291,6 +289,18 @@ HABER_KAYNAKLARI = [
         "dil"  : "tr",
         "isim" : "CoinTurk",
     },
+    {
+        "url"  : "https://api.rss2json.com/v1/api.json?rss_url=https://tr.cointelegraph.com/rss",
+        "tip"  : "rss2json",
+        "dil"  : "tr",
+        "isim" : "CoinTelegraph TR",
+    },
+    {
+        "url"  : "https://api.rss2json.com/v1/api.json?rss_url=https://kriptopara.com/feed/",
+        "tip"  : "rss2json",
+        "dil"  : "tr",
+        "isim" : "KriptoPara",
+    },
 ]
 
 
@@ -308,28 +318,23 @@ async def fetch_tek_kaynak(sess: aiohttp.ClientSession, kaynak: dict) -> list:
         async with sess.get(kaynak["url"], timeout=aiohttp.ClientTimeout(total=12)) as r:
             data = await r.json(content_type=None)
         haberler = []
-        if kaynak["tip"] == "cryptocompare":
-            for h in data.get("Data", [])[:8]:
-                haberler.append({
-                    "id"    : str(h.get("id", "")),
-                    "baslik": h.get("title", ""),
-                    "icerik": h.get("body", ""),
-                    "url"   : h.get("url", ""),
-                    "kaynak": kaynak["isim"],
-                    "dil"   : kaynak["dil"],
-                    "zaman" : datetime.utcfromtimestamp(h.get("published_on", 0)),
-                })
-        elif kaynak["tip"] == "rss2json":
-            for h in data.get("items", [])[:8]:
-                haberler.append({
-                    "id"    : h.get("guid", h.get("link", "")),
-                    "baslik": h.get("title", ""),
-                    "icerik": h.get("description", "")[:1000],
-                    "url"   : h.get("link", ""),
-                    "kaynak": kaynak["isim"],
-                    "dil"   : kaynak["dil"],
-                    "zaman" : _parse_rss_date(h.get("pubDate", "")),
-                })
+        for h in data.get("items", [])[:10]:
+            link  = h.get("link", "")
+            guid  = h.get("guid", link)
+            baslik = h.get("title", "").strip()
+            # HTML taglarını temizle (description bazen HTML içeriyor)
+            import re as _re
+            icerik_ham = h.get("description", h.get("content", ""))
+            icerik = _re.sub(r"<[^>]+>", " ", icerik_ham).strip()[:1200]
+            haberler.append({
+                "id"    : guid,
+                "baslik": baslik,
+                "icerik": icerik,
+                "url"   : link,
+                "kaynak": kaynak["isim"],
+                "dil"   : "tr",
+                "zaman" : _parse_rss_date(h.get("pubDate", "")),
+            })
         return haberler
     except Exception as e:
         log.warning(f"Kaynak {kaynak['isim']} hata: {e}")
@@ -357,7 +362,6 @@ async def fetch_crypto_news() -> list:
 def haber_mesaj_formatla(h: dict, ai: dict, son_dk: bool = False) -> str:
     """Telegram'a gönderilecek haber metnini oluşturur."""
     etiketler = " ".join(ai.get("etiketler", []))
-    kaynak_dil = "🇹🇷" if h.get("dil") == "tr" else "🌐"
     header = "🚨 *SON DAKİKA* 🚨" if son_dk else "📰 *Kripto Haber*"
     zaman_str = h["zaman"].strftime("%d.%m.%Y %H:%M") if h.get("zaman") else ""
     text = (
@@ -365,7 +369,7 @@ def haber_mesaj_formatla(h: dict, ai: dict, son_dk: bool = False) -> str:
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"📌 *{ai['baslik']}*\n\n"
         f"📝 {ai['ozet']}\n\n"
-        f"{kaynak_dil} Kaynak: {h['kaynak']}  🕐 {zaman_str}\n"
+        f"🇹🇷 Kaynak: {h['kaynak']}  🕐 {zaman_str}\n"
         f"🔗 [Haberin tamamı]({h['url']})\n"
     )
     if etiketler:
@@ -694,23 +698,44 @@ async def cmd_haber_paylas(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ Yetki yok."); return
     if GROUP_ID == 0:
         await update.message.reply_text("❌ `GROUP_ID` ayarlanmamış.", parse_mode="Markdown"); return
-    msg = await update.message.reply_text("📰 Haberler alınıyor... ⏳")
+
+    msg = await update.message.reply_text("📰 Haberler alınıyor ve özetleniyor... ⏳")
     haberler = await fetch_crypto_news()
-    yeni = [h for h in haberler if h["id"] not in posted_news]
+    yeni = [h for h in haberler if h["id"] not in posted_news and h["url"] not in posted_news]
     if not yeni:
-        await msg.edit_text("ℹ️ Yeni haber yok."); return
-    n = 0
-    for h in yeni[:3]:
-        ai = await openai_ozet(h.get("icerik", h.get("baslik", "")), h.get("baslik", ""))
-        text = haber_mesaj_formatla(h, ai, son_dk=ai.get("son_dk", False))
-        try:
-            await context.bot.send_message(GROUP_ID, text, parse_mode="Markdown",
-                                           disable_web_page_preview=True)
-            posted_news.add(h["id"]); n += 1
-            await asyncio.sleep(1)
-        except Exception as e:
-            log.warning(f"Haber gönderilemedi: {e}")
-    await msg.edit_text(f"✅ {n} haber gruba paylaşıldı.")
+        await msg.edit_text("ℹ️ Yeni haber yok. Tüm haberler zaten paylaşıldı."); return
+
+    # İlk yeni haberi al ve özetle
+    h  = yeni[0]
+    ai = await openai_ozet(h.get("icerik", h.get("baslik", "")), h.get("baslik", ""))
+    text = haber_mesaj_formatla(h, ai, son_dk=ai.get("son_dk", False))
+
+    # ── ÖNİZLEME: Adminin DM'ine göster ──
+    onizleme = (
+        "👁 *HABER ÖNİZLEME*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "Aşağıdaki haber gruba gönderilecek.\n"
+        "Onaylamak için butona bas:\n\n"
+        + text
+    )
+    # Haberi context.bot_data'ya geçici kaydet
+    context.bot_data["bekleyen_haber_text"] = text
+    context.bot_data["bekleyen_haber_id"]   = h["id"]
+    context.bot_data["bekleyen_haber_url"]  = h["url"]
+
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Gruba Gönder", callback_data="haber_onayla"),
+            InlineKeyboardButton("❌ İptal",        callback_data="haber_iptal"),
+        ],
+        [
+            InlineKeyboardButton("⏭ Sonraki Haber", callback_data="haber_sonraki"),
+        ]
+    ])
+    await msg.delete()
+    await update.message.reply_text(onizleme, parse_mode="Markdown",
+                                    disable_web_page_preview=True,
+                                    reply_markup=kb)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -877,22 +902,98 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await q.message.edit_text("📰 Haberler alınıyor ve özetleniyor... ⏳")
         haberler = await fetch_crypto_news()
-        yeni = [h for h in haberler if h["id"] not in posted_news]
-        n = 0
-        for h in yeni[:3]:
-            ai = await openai_ozet(h.get("icerik", h.get("baslik", "")), h.get("baslik", ""))
-            text = haber_mesaj_formatla(h, ai, son_dk=ai.get("son_dk", False))
-            try:
-                await context.bot.send_message(GROUP_ID, text, parse_mode="Markdown",
-                                               disable_web_page_preview=True)
-                posted_news.add(h["id"]); n += 1
-                await asyncio.sleep(1)
-            except Exception as e:
-                log.warning(f"Haber gonderilemedi: {e}")
-        await q.message.edit_text(f"✅ {n} haber paylaşıldı.",
+        yeni = [h for h in haberler if h["id"] not in posted_news and h["url"] not in posted_news]
+        if not yeni:
+            await q.message.edit_text("ℹ️ Yeni haber yok.",
+                                      reply_markup=InlineKeyboardMarkup([[
+                                          InlineKeyboardButton("🔙 Admin", callback_data="menu_admin")
+                                      ]]))
+            return
+        h  = yeni[0]
+        ai = await openai_ozet(h.get("icerik", h.get("baslik", "")), h.get("baslik", ""))
+        text = haber_mesaj_formatla(h, ai, son_dk=ai.get("son_dk", False))
+        # Geçici kaydet
+        context.bot_data["bekleyen_haber_text"] = text
+        context.bot_data["bekleyen_haber_id"]   = h["id"]
+        context.bot_data["bekleyen_haber_url"]  = h["url"]
+        onizleme = "👁 *HABER ÖNİZLEME*\n━━━━━━━━━━━━━━━━━━━━\nGruba gönderilecek haber:\n\n" + text
+        await q.message.edit_text(onizleme, parse_mode="Markdown",
+                                  disable_web_page_preview=True,
+                                  reply_markup=InlineKeyboardMarkup([
+                                      [
+                                          InlineKeyboardButton("✅ Gruba Gönder", callback_data="haber_onayla"),
+                                          InlineKeyboardButton("❌ İptal",        callback_data="haber_iptal"),
+                                      ],
+                                      [InlineKeyboardButton("⏭ Sonraki Haber",   callback_data="haber_sonraki")],
+                                  ]))
+
+    elif data == "haber_onayla":
+        if not adm: await q.answer("⛔ Yetki yok!", show_alert=True); return
+        text = context.bot_data.get("bekleyen_haber_text")
+        hid  = context.bot_data.get("bekleyen_haber_id")
+        hurl = context.bot_data.get("bekleyen_haber_url")
+        if not text:
+            await q.answer("⚠️ Haber bulunamadı, tekrar dene.", show_alert=True); return
+        try:
+            await context.bot.send_message(GROUP_ID, text, parse_mode="Markdown",
+                                           disable_web_page_preview=True)
+            if hid:  posted_news.add(hid)
+            if hurl: posted_news.add(hurl)
+            context.bot_data.pop("bekleyen_haber_text", None)
+            context.bot_data.pop("bekleyen_haber_id", None)
+            context.bot_data.pop("bekleyen_haber_url", None)
+            await q.message.edit_text("✅ Haber gruba gönderildi!",
+                                      reply_markup=InlineKeyboardMarkup([[
+                                          InlineKeyboardButton("🔙 Admin", callback_data="menu_admin")
+                                      ]]))
+        except Exception as e:
+            await q.message.edit_text(f"❌ Gönderilemedi: {e}",
+                                      reply_markup=InlineKeyboardMarkup([[
+                                          InlineKeyboardButton("🔙 Admin", callback_data="menu_admin")
+                                      ]]))
+
+    elif data == "haber_iptal":
+        if not adm: await q.answer("⛔ Yetki yok!", show_alert=True); return
+        context.bot_data.pop("bekleyen_haber_text", None)
+        context.bot_data.pop("bekleyen_haber_id", None)
+        context.bot_data.pop("bekleyen_haber_url", None)
+        await q.message.edit_text("❌ Haber paylaşımı iptal edildi.",
                                   reply_markup=InlineKeyboardMarkup([[
                                       InlineKeyboardButton("🔙 Admin", callback_data="menu_admin")
                                   ]]))
+
+    elif data == "haber_sonraki":
+        if not adm: await q.answer("⛔ Yetki yok!", show_alert=True); return
+        # Şu anki bekleyen haberi atla, sonrakini göster
+        hid  = context.bot_data.get("bekleyen_haber_id")
+        hurl = context.bot_data.get("bekleyen_haber_url")
+        if hid:  posted_news.add(hid)   # bu oturumda atla
+        if hurl: posted_news.add(hurl)
+        await q.message.edit_text("📰 Sonraki haber yükleniyor... ⏳")
+        haberler = await fetch_crypto_news()
+        yeni = [h for h in haberler if h["id"] not in posted_news and h["url"] not in posted_news]
+        if not yeni:
+            await q.message.edit_text("ℹ️ Başka yeni haber kalmadı.",
+                                      reply_markup=InlineKeyboardMarkup([[
+                                          InlineKeyboardButton("🔙 Admin", callback_data="menu_admin")
+                                      ]]))
+            return
+        h  = yeni[0]
+        ai = await openai_ozet(h.get("icerik", h.get("baslik", "")), h.get("baslik", ""))
+        text = haber_mesaj_formatla(h, ai, son_dk=ai.get("son_dk", False))
+        context.bot_data["bekleyen_haber_text"] = text
+        context.bot_data["bekleyen_haber_id"]   = h["id"]
+        context.bot_data["bekleyen_haber_url"]  = h["url"]
+        onizleme = "👁 *HABER ÖNİZLEME*\n━━━━━━━━━━━━━━━━━━━━\nGruba gönderilecek haber:\n\n" + text
+        await q.message.edit_text(onizleme, parse_mode="Markdown",
+                                  disable_web_page_preview=True,
+                                  reply_markup=InlineKeyboardMarkup([
+                                      [
+                                          InlineKeyboardButton("✅ Gruba Gönder", callback_data="haber_onayla"),
+                                          InlineKeyboardButton("❌ İptal",        callback_data="haber_iptal"),
+                                      ],
+                                      [InlineKeyboardButton("⏭ Sonraki Haber",   callback_data="haber_sonraki")],
+                                  ]))
 
     elif data == "admin_istat":
         if not adm: await q.answer("⛔ Yetki yok!", show_alert=True); return
@@ -923,24 +1024,29 @@ def _bitis_gun(a):
 # OTOMATİK HABER + SON DAKİKA ALGILAMA
 # ══════════════════════════════════════════════════════════════
 async def auto_haber_job(context: ContextTypes.DEFAULT_TYPE):
-    """Düzenli aralıklarla haber paylaşır."""
+    """Düzenli aralıklarla 1 haber paylaşır."""
     if GROUP_ID == 0 or not OPENAI_KEY:
         return
     if not haber_ayarlari.get("aktif", True):
         return
     haberler = await fetch_crypto_news()
-    yeni = [h for h in haberler if h["id"] not in posted_news]
-    adet = haber_ayarlari.get("adet", 2)
-    for h in yeni[:adet]:
-        ai = await openai_ozet(h.get("icerik", h.get("baslik", "")), h.get("baslik", ""))
-        text = haber_mesaj_formatla(h, ai, son_dk=False)  # Rutin paylaşımda son_dk=False
-        try:
-            await context.bot.send_message(GROUP_ID, text, parse_mode="Markdown",
-                                           disable_web_page_preview=True)
-            posted_news.add(h["id"])
-            await asyncio.sleep(2)
-        except Exception as e:
-            log.warning(f"Oto haber hatasi: {e}")
+    # posted_news URL bazlı da kontrol et (aynı haberin farklı id ile gelmesi durumu)
+    yeni = [h for h in haberler if h["id"] not in posted_news and h["url"] not in posted_news]
+    if not yeni:
+        log.info("auto_haber_job: yeni haber yok")
+        return
+    # Sadece 1 haber gönder
+    h = yeni[0]
+    ai = await openai_ozet(h.get("icerik", h.get("baslik", "")), h.get("baslik", ""))
+    text = haber_mesaj_formatla(h, ai, son_dk=False)
+    try:
+        await context.bot.send_message(GROUP_ID, text, parse_mode="Markdown",
+                                       disable_web_page_preview=True)
+        posted_news.add(h["id"])
+        posted_news.add(h["url"])  # URL'yi de ekle
+        log.info(f"Oto haber paylaşıldı: {h['baslik'][:60]}")
+    except Exception as e:
+        log.warning(f"Oto haber hatasi: {e}")
 
 
 async def son_dk_haber_job(context: ContextTypes.DEFAULT_TYPE):
@@ -959,8 +1065,8 @@ async def son_dk_haber_job(context: ContextTypes.DEFAULT_TYPE):
     haberler = await fetch_crypto_news()
 
     for h in haberler:
-        # Daha önce paylaşıldıysa atla
-        if h["id"] in posted_news:
+        # Daha önce paylaşıldıysa atla (id VE url bazlı kontrol)
+        if h["id"] in posted_news or h["url"] in posted_news:
             continue
         # Haberın zamanı son kontrol periyodundan daha yeni mi?
         try:
@@ -973,7 +1079,8 @@ async def son_dk_haber_job(context: ContextTypes.DEFAULT_TYPE):
         # AI ile son dakika kontrolü
         ai = await openai_ozet(h.get("icerik", h.get("baslik", "")), h.get("baslik", ""))
         if not ai.get("son_dk", False):
-            posted_news.add(h["id"])  # Son dk değil, kaydet ama paylaşma
+            posted_news.add(h["id"])
+            posted_news.add(h["url"])  # Son dk değil, kaydet ama paylaşma
             continue
 
         # SON DAKİKA — hemen paylaş!
@@ -982,6 +1089,7 @@ async def son_dk_haber_job(context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(GROUP_ID, text, parse_mode="Markdown",
                                            disable_web_page_preview=True)
             posted_news.add(h["id"])
+            posted_news.add(h["url"])  # URL'yi de kaydet
             log.info(f"Son dakika haberi paylaşıldı: {h['baslik'][:60]}")
             await asyncio.sleep(2)
         except Exception as e:
