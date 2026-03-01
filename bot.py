@@ -1,3 +1,4 @@
+import os
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -12,7 +13,7 @@ from telegram.ext import (
 )
 from datetime import datetime, timedelta
 
-TOKEN = "8735318720:AAF2qQPhDDTh_3kOdCdcGg6sJJIYX9ltEI0"
+TOKEN = os.getenv("BOT_TOKEN")
 
 # ──────────────────────────────────────────────────────────────
 # İSTATİSTİK VERİLERİ
@@ -328,6 +329,15 @@ async def cmd_yardim(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
+
+
+# ──────────────────────────────────────────────────────────────
+# KOMUTLAR — START
+# ──────────────────────────────────────────────────────────────
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text, markup = get_welcome_message()
+    await update.message.reply_text(text, reply_markup=markup, parse_mode="Markdown")
+
 # ──────────────────────────────────────────────────────────────
 # UYGULAMA
 # ──────────────────────────────────────────────────────────────
@@ -338,6 +348,7 @@ app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome))
 app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT, private_message))
 
 # Genel komutlar
+app.add_handler(CommandHandler("start",       cmd_start))
 app.add_handler(CommandHandler("airdrops",    cmd_airdrops))
 app.add_handler(CommandHandler("istatistik",  cmd_istatistik))
 app.add_handler(CommandHandler("yardim",      cmd_yardim))
@@ -348,5 +359,6 @@ app.add_handler(CommandHandler("airdropbitir", cmd_airdrop_bitir))
 app.add_handler(CommandHandler("airdropsil",   cmd_airdrop_sil))
 app.add_handler(CommandHandler("airdroptumu",  cmd_airdrop_tumu))
 
-print("KriptoDropTR Bot v2 Aktif 🚀")
-app.run_polling()
+if __name__ == "__main__":
+    print("KriptoDropTR Bot v2 Aktif 🚀")
+    app.run_polling(drop_pending_updates=True)
